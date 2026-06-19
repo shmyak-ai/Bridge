@@ -1,0 +1,6 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# Addons (godot_ai, godot_rl_agents) — external tooling, not versioned
+/addons/

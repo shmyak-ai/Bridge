@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://5xfrnni0gg0l"]
+
+[ext_resource type="Script" uid="uid://cshwsa5loceob" path="res://voxel_terrain.gd" id="1_38a2p"]
+
+[node name="VoxelTerrain" type="Node3D" unique_id=997180999]
+script = ExtResource("1_38a2p")
