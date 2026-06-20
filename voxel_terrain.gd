@@ -19,8 +19,7 @@ var red_cell: Vector3i
 # Nodes recreated each episode by generate_world(); kept so they can be freed.
 var _voxel_surface: MultiMeshInstance3D
 var _terrain_body: StaticBody3D
-var _blue_cube: RigidBody3D
-var _red_cube: RigidBody3D
+var _cubes: Array = []     # all anchor cubes (incl. stacked filler), freed on reset
 
 # RL wiring (set up once in _setup_rl).
 var _build_system: Node3D
@@ -44,9 +43,13 @@ func generate_world() -> void:
 		_build_system.red_cell = red_cell
 
 func _clear_world() -> void:
-	for n in [_voxel_surface, _terrain_body, _blue_cube, _red_cube]:
+	for n in [_voxel_surface, _terrain_body]:
 		if is_instance_valid(n):
 			n.queue_free()
+	for c in _cubes:
+		if is_instance_valid(c):
+			c.queue_free()
+	_cubes = []
 
 func _build_terrain() -> void:
 	var noise := FastNoiseLite.new()
@@ -117,17 +120,24 @@ func _place_cubes() -> void:
 	while b == a:
 		b = Vector2i(randi() % GRID, randi() % GRID)
 
-	_blue_cube = _add_cube("BlueCube", a, Color(0.15, 0.35, 0.90))
-	_red_cube = _add_cube("RedCube", b, Color(0.90, 0.20, 0.15))
-	blue_cell = _cell_for(a)
-	red_cell = _cell_for(b)
+	# Anchor both cubes at the same height so a flat plate bridge can connect
+	# them: the shorter column gets extra cubes stacked on top to reach the
+	# taller one. The topmost cube of each stack is the connection anchor.
+	var top: int = maxi(_heights[a.x][a.y], _heights[b.x][b.y])
+	_stack_cubes("BlueCube", a, Color(0.15, 0.35, 0.90), top)
+	_stack_cubes("RedCube", b, Color(0.90, 0.20, 0.15), top)
+	blue_cell = Vector3i(a.x, top, a.y)
+	red_cell = Vector3i(b.x, top, b.y)
 
-func _cell_for(cell: Vector2i) -> Vector3i:
-	# The cube's base sits on the column top, so it occupies the row at y = top.
-	var top: int = _heights[cell.x][cell.y]
-	return Vector3i(cell.x, top, cell.y)
+## Stack cubes on a column from its terrain top up to row `top_row`, so the
+## topmost cube occupies (x, top_row, z). Places one cube when already level.
+func _stack_cubes(base_name: String, cell: Vector2i, color: Color, top_row: int) -> void:
+	var ground: int = _heights[cell.x][cell.y]
+	for y in range(ground, top_row + 1):
+		var node_name := base_name if y == top_row else "%s_fill_%d" % [base_name, y]
+		_add_cube(node_name, cell, color, y)
 
-func _add_cube(node_name: String, cell: Vector2i, color: Color) -> RigidBody3D:
+func _add_cube(node_name: String, cell: Vector2i, color: Color, y_row: int) -> void:
 	var cube := RigidBody3D.new()
 	cube.name = node_name
 	cube.freeze = true  # fixed anchor: keeps collision but never moves
@@ -147,11 +157,10 @@ func _add_cube(node_name: String, cell: Vector2i, color: Color) -> RigidBody3D:
 	cs.shape = shape
 	cube.add_child(cs)
 
-	# Rest the cube on the surface at this cell (bottom on the column top).
-	var top: int = _heights[cell.x][cell.y]
-	cube.position = Vector3(cell.x + 0.5, top + 0.5, cell.y + 0.5)
+	# Place the cube so it occupies the voxel layer at y = y_row.
+	cube.position = Vector3(cell.x + 0.5, y_row + 0.5, cell.y + 0.5)
 	add_child(cube)
-	return cube
+	_cubes.append(cube)
 
 func _color_for(h: int) -> Color:
 	# Valley green up to hilltop light green.

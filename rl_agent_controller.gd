@@ -43,6 +43,11 @@ func get_info() -> Dictionary:
 func _physics_process(delta):
 	super(delta)  # increments n_steps, sets needs_reset after reset_after
 
+	# No step/time limit when a human is playing (explicit HUMAN mode or the
+	# training fallback when no trainer is connected): only win/collapse resets.
+	if heuristic == "human":
+		needs_reset = false
+
 	# Reward: +1 only when the connecting distance hits a new minimum.
 	var gap: int = bs.compute_gap()
 	if gap < _best_gap:
