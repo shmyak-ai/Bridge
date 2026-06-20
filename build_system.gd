@@ -131,7 +131,7 @@ func _resolve(cell: Vector3i) -> Vector3i:
 	return c
 
 func _is_occupied(cell: Vector3i) -> bool:
-	if cell == blue_cell or cell == red_cell:
+	if _in_anchor_stack(cell, blue_cell) or _in_anchor_stack(cell, red_cell):
 		return true
 	if _occupied.has(cell):
 		return true
@@ -140,6 +140,12 @@ func _is_occupied(cell: Vector3i) -> bool:
 		if cell.y >= 0 and cell.y < h:
 			return true
 	return false
+
+## The anchor cube and the filler cubes beneath it fill the column from the
+## terrain top up to (and including) the anchor row.
+func _in_anchor_stack(cell: Vector3i, anchor: Vector3i) -> bool:
+	return cell.x == anchor.x and cell.z == anchor.z \
+		and cell.y >= heights[anchor.x][anchor.z] and cell.y <= anchor.y
 
 func _size_for(type: int) -> Vector3:
 	return PLATE_SIZE if type == BlockType.PLATE else SUPPORT_SIZE
