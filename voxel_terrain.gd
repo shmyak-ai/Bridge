@@ -16,11 +16,37 @@ var _heights: Array = []
 var blue_cell: Vector3i
 var red_cell: Vector3i
 
+# Nodes recreated each episode by generate_world(); kept so they can be freed.
+var _voxel_surface: MultiMeshInstance3D
+var _terrain_body: StaticBody3D
+var _blue_cube: RigidBody3D
+var _red_cube: RigidBody3D
+
+# RL wiring (set up once in _setup_rl).
+var _build_system: Node3D
+var _controller: Node3D
+
 func _ready() -> void:
-	_build_terrain()
-	_place_cubes()
+	generate_world()
 	_setup_lighting()
 	_setup_player()
+	_setup_rl()
+
+## (Re)build the terrain and place the cubes. Called on start and on every
+## episode reset, so each episode trains on fresh hills and cube positions.
+func generate_world() -> void:
+	_clear_world()
+	_build_terrain()
+	_place_cubes()
+	if _build_system:
+		_build_system.heights = _heights
+		_build_system.blue_cell = blue_cell
+		_build_system.red_cell = red_cell
+
+func _clear_world() -> void:
+	for n in [_voxel_surface, _terrain_body, _blue_cube, _red_cube]:
+		if is_instance_valid(n):
+			n.queue_free()
 
 func _build_terrain() -> void:
 	var noise := FastNoiseLite.new()
@@ -65,6 +91,7 @@ func _build_terrain() -> void:
 	mmi.multimesh = mm
 	mmi.material_override = mat
 	add_child(mmi)
+	_voxel_surface = mmi
 
 	# The MultiMesh above is only visual. Give the terrain a matching solid
 	# body (one box collider per column) so the physics cubes rest on it
@@ -81,6 +108,7 @@ func _build_terrain() -> void:
 			cs.position = Vector3(x + 0.5, h * 0.5, z + 0.5)
 			body.add_child(cs)
 	add_child(body)
+	_terrain_body = body
 
 func _place_cubes() -> void:
 	# Two different random grid cells, so the cubes never overlap.
@@ -89,10 +117,17 @@ func _place_cubes() -> void:
 	while b == a:
 		b = Vector2i(randi() % GRID, randi() % GRID)
 
-	blue_cell = _add_cube("BlueCube", a, Color(0.15, 0.35, 0.90))
-	red_cell = _add_cube("RedCube", b, Color(0.90, 0.20, 0.15))
+	_blue_cube = _add_cube("BlueCube", a, Color(0.15, 0.35, 0.90))
+	_red_cube = _add_cube("RedCube", b, Color(0.90, 0.20, 0.15))
+	blue_cell = _cell_for(a)
+	red_cell = _cell_for(b)
 
-func _add_cube(node_name: String, cell: Vector2i, color: Color) -> Vector3i:
+func _cell_for(cell: Vector2i) -> Vector3i:
+	# The cube's base sits on the column top, so it occupies the row at y = top.
+	var top: int = _heights[cell.x][cell.y]
+	return Vector3i(cell.x, top, cell.y)
+
+func _add_cube(node_name: String, cell: Vector2i, color: Color) -> RigidBody3D:
 	var cube := RigidBody3D.new()
 	cube.name = node_name
 	cube.freeze = true  # fixed anchor: keeps collision but never moves
@@ -116,8 +151,7 @@ func _add_cube(node_name: String, cell: Vector2i, color: Color) -> Vector3i:
 	var top: int = _heights[cell.x][cell.y]
 	cube.position = Vector3(cell.x + 0.5, top + 0.5, cell.y + 0.5)
 	add_child(cube)
-	# The cube occupies the cell-row at y = top (its base sits on the column).
-	return Vector3i(cell.x, top, cell.y)
+	return cube
 
 func _color_for(h: int) -> Color:
 	# Valley green up to hilltop light green.
@@ -149,13 +183,32 @@ func _setup_player() -> void:
 	cam.look_at(Vector3(GRID * 0.5, 3.0, GRID * 0.5), Vector3.UP)
 	cam.current = true
 
+## Build system + the godot_rl_agents Sync/agent nodes. Created once; the agent
+## resets the world in-place each episode instead of recreating these.
+func _setup_rl() -> void:
 	# Build system: grid cursor, block placement, win/lose. Hand it the world
 	# data it needs before it enters the tree (so its _ready sees it).
-	var bs := Node3D.new()
-	bs.name = "BuildSystem"
-	bs.set_script(load("res://build_system.gd"))
-	bs.heights = _heights
-	bs.grid = GRID
-	bs.blue_cell = blue_cell
-	bs.red_cell = red_cell
-	add_child(bs)
+	_build_system = Node3D.new()
+	_build_system.name = "BuildSystem"
+	_build_system.set_script(load("res://build_system.gd"))
+	_build_system.heights = _heights
+	_build_system.grid = GRID
+	_build_system.blue_cell = blue_cell
+	_build_system.red_cell = red_cell
+	add_child(_build_system)
+
+	# RL agent (extends AIController3D). Wire its world refs before it enters the
+	# tree, then it adds itself to the "AGENT" group in _ready.
+	_controller = load("res://rl_agent_controller.gd").new()
+	_controller.name = "RLAgent"
+	_controller.bs = _build_system
+	_controller.world = self
+	_build_system.add_child(_controller)
+
+	# Sync node: bridges the agent(s) to the Python trainer. Switch control_mode
+	# to TRAINING to connect to the godot_rl server; HUMAN lets you play/test.
+	var sync := Sync.new()
+	sync.name = "Sync"
+	sync.control_mode = Sync.ControlModes.TRAINING
+	sync.action_repeat = 1
+	add_child(sync)

@@ -23,14 +23,24 @@ const COLLAPSE_DIST := 1.0    # moved this far from where placed = toppled
 const V_STILL := 0.15         # speed under this counts as "at rest"
 const STABLE_TIME := 1.0      # must stay connected + still this long to win
 
+# --- RL observation image (godot_rl_agents) --------------------------------
+# A top-down, multi-channel uint8 "image" of the board, one pixel per grid
+# cell (native GRID x GRID, no padding). Each pixel stores a top-surface height
+# in 0.1 m units (0 = empty), matching the smallest object (0.1 m plates) while
+# terrain steps are 1 m.
+const IMG_SIZE := 25
+const IMG_CHANNELS := 6        # terrain, cubes, supports, slabs, cursor, block type
+const HEIGHT_UNIT := 0.1       # discretization: 1 byte = 0.1 m (max 25.5 m)
+
 var _cursor := Vector3i.ZERO
 var _current: int = BlockType.PLATE
 var _state: int = GameState.BUILDING
 var _stable_timer := 0.0
 
-var _occupied := {}     # Vector3i -> true, cells filled by placed blocks
-var _plate_cells := {}  # Vector3i -> true, plate cells only (for connectivity)
-var _blocks := []       # [{node: RigidBody3D, spawn: Vector3}]
+var _occupied := {}        # Vector3i -> true, cells filled by placed blocks
+var _plate_cells := {}     # Vector3i -> true, plate cells only (for connectivity)
+var _support_cells := {}   # Vector3i -> true, support cells only (for the obs image)
+var _blocks := []          # [{node: RigidBody3D, spawn: Vector3}]
 
 var _ghost: MeshInstance3D
 var _hud_type: Label
@@ -103,6 +113,8 @@ func _place() -> void:
 	_blocks.append({"node": body, "spawn": pos})
 	if type == BlockType.PLATE:
 		_plate_cells[cell] = true
+	else:
+		_support_cells[cell] = true
 
 func _resolve(cell: Vector3i) -> Vector3i:
 	var c := cell
@@ -251,3 +263,127 @@ func _update_hud() -> void:
 		GameState.WON: _hud_status.text = "CONNECTED - YOU WIN!   (R to restart)"
 		GameState.COLLAPSED: _hud_status.text = "COLLAPSED!   (R to restart)"
 		_: _hud_status.text = "Status: building..."
+
+# --- RL agent API (driven by rl_agent_controller.gd) -----------------------
+# These mirror the keyboard actions so a training agent and a human use the
+# same placement code path.
+
+func move_cursor(d: Vector3i) -> void:
+	_cursor += d
+	_update_hud()
+
+func toggle_type() -> void:
+	_current = BlockType.SUPPORT if _current == BlockType.PLATE else BlockType.PLATE
+	(_ghost.mesh as BoxMesh).size = _size_for(_current)
+	_update_hud()
+
+func place() -> void:
+	_place()
+	_update_hud()
+
+func current_block_type() -> int:
+	return _current
+
+func is_won() -> bool:
+	return _state == GameState.WON
+
+func is_collapsed() -> bool:
+	return _state == GameState.COLLAPSED
+
+## Clear all placed blocks and game state for a fresh episode. Terrain and cube
+## cells are refreshed separately by voxel_terrain.generate_world() before this.
+func rl_reset() -> void:
+	for b in _blocks:
+		(b["node"] as Node).queue_free()
+	_blocks.clear()
+	_occupied.clear()
+	_plate_cells.clear()
+	_support_cells.clear()
+	_cursor = blue_cell
+	_state = GameState.BUILDING
+	_stable_timer = 0.0
+	if _ghost:
+		_update_hud()
+
+## Symmetric Chebyshev distance between the two slab fronts growing from the
+## cubes: min distance between {blue + its connected plates} and {red + its
+## connected plates}. Chebyshev includes the y axis, so a decrease only counts
+## when the fronts approach at a connectable ("same") level. <= 1 means linked.
+func compute_gap() -> int:
+	var blue_pts := _component_from(blue_cell).keys()
+	blue_pts.append(blue_cell)
+	var red_pts := _component_from(red_cell).keys()
+	red_pts.append(red_cell)
+	var best := 1 << 30
+	for a in blue_pts:
+		for b in red_pts:
+			var d := _chebyshev(a, b)
+			if d < best:
+				best = d
+	return best
+
+## Plate cells reachable from a cube via Chebyshev-adjacent plate steps.
+func _component_from(cube_cell: Vector3i) -> Dictionary:
+	var comp := {}
+	var queue := []
+	for cell in _plate_cells:
+		if _chebyshev(cell, cube_cell) <= 1:
+			comp[cell] = true
+			queue.append(cell)
+	while not queue.is_empty():
+		var c: Vector3i = queue.pop_back()
+		for nb in _neighbors(c):
+			if _plate_cells.has(nb) and not comp.has(nb):
+				comp[nb] = true
+				queue.append(nb)
+	return comp
+
+## [channels, height, width] of the observation image, for get_obs_space().
+func obs_image_shape() -> Array:
+	return [IMG_CHANNELS, IMG_SIZE, IMG_SIZE]
+
+## IMG_CHANNELS x IMG_SIZE x IMG_SIZE uint8 buffer, channel-major, ready to
+## hex_encode() and send under a "..._2d" obs key.
+func build_obs_image() -> PackedByteArray:
+	var buf := PackedByteArray()
+	buf.resize(IMG_CHANNELS * IMG_SIZE * IMG_SIZE)  # resize() zero-fills
+
+	# ch0: terrain top height
+	for x in grid:
+		for z in grid:
+			_set_px(buf, 0, x, z, _enc(float(heights[x][z])))
+	# ch1: blue/red cube top surfaces (cube base on its column top, 1 m tall)
+	_set_px(buf, 1, blue_cell.x, blue_cell.z, _enc(float(blue_cell.y) + 1.0))
+	_set_px(buf, 1, red_cell.x, red_cell.z, _enc(float(red_cell.y) + 1.0))
+	# ch2: highest support top per column
+	for cell in _support_cells:
+		_max_px(buf, 2, cell.x, cell.z, _enc(float(cell.y) + 1.0))
+	# ch3: highest plate top per column
+	for cell in _plate_cells:
+		_max_px(buf, 3, cell.x, cell.z, _enc(float(cell.y) + PLATE_SIZE.y))
+	# ch4: cursor cell (>=1 so it is always visible, even at y = 0)
+	_set_px(buf, 4, _cursor.x, _cursor.z, maxi(1, _enc(float(_cursor.y))))
+	# ch5: selected block type as a constant plane (0 = PLATE, 255 = SUPPORT)
+	var type_val := _current * 255
+	var base := 5 * IMG_SIZE * IMG_SIZE
+	for i in IMG_SIZE * IMG_SIZE:
+		buf[base + i] = type_val
+	return buf
+
+func _enc(height_m: float) -> int:
+	return clampi(int(round(height_m / HEIGHT_UNIT)), 0, 255)
+
+func _px_index(c: int, x: int, z: int) -> int:
+	return c * IMG_SIZE * IMG_SIZE + z * IMG_SIZE + x
+
+func _set_px(buf: PackedByteArray, c: int, x: int, z: int, v: int) -> void:
+	if x < 0 or x >= IMG_SIZE or z < 0 or z >= IMG_SIZE:
+		return
+	buf[_px_index(c, x, z)] = v
+
+func _max_px(buf: PackedByteArray, c: int, x: int, z: int, v: int) -> void:
+	if x < 0 or x >= IMG_SIZE or z < 0 or z >= IMG_SIZE:
+		return
+	var i := _px_index(c, x, z)
+	if v > buf[i]:
+		buf[i] = v
