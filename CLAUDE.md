@@ -11,30 +11,54 @@ supports) to build a standing bridge between them. The game is driven either by 
 
 - Engine: Godot **4.6**, Forward Plus renderer, **Jolt Physics**.
 - Main scene: `voxel_terrain.tscn` (`uid://5xfrnni0gg0l`), a one-node scene with
-  `voxel_terrain.gd` attached. Nearly everything (terrain, cubes, lighting, camera, HUD,
-  build system, RL nodes) is built **in code at runtime**, not in the scene file.
+  `voxel_terrain.gd` attached. Nearly everything (environments, terrain, cubes, lighting,
+  camera, HUD, build system, RL nodes) is built **in code at runtime**, not in the scene.
+- One Godot process hosts **N independent environments** at once (vectorization): each is
+  a self-contained world+agent (`environment.gd`), laid out side by side at an X/Z offset.
 
 ## Running
 
 - **Play/train**: open the project in Godot and run the main scene, or `project_run` via
   the `godot-ai` MCP. There is no separate build step.
-- **RL control mode** is set in `voxel_terrain.gd::_setup_rl()` on the `Sync` node:
+- **RL control mode** is the `voxel_terrain.gd::CONTROL_MODE` variable (drives both the
+  env count and the `Sync` node):
   - `Sync.ControlModes.TRAINING` (current default) — connects to a Python `godot_rl`
     trainer over TCP (default port `11008`, see `addons/godot_rl_agents/sync.gd`).
     The Godot side blocks waiting for the trainer, so launch the Python trainer to drive it.
   - `HUMAN` — play/test manually with the keyboard (see HUD controls in `build_system.gd`).
-  - Switch this constant when you want to play by hand vs. train.
+    HUMAN auto-spawns a **single** environment (each BuildSystem has its own input handler,
+    so N envs would all move at once) — no need to touch `NUM_ENVS`.
+  - Switch this one variable when you want to play by hand vs. train.
+
+### Vectorized / parallel environments
+
+- **In-process count** — `voxel_terrain.gd::NUM_ENVS` (default 4), overridable at launch
+  with `--n_envs=<N>`. The trainer's `GodotEnv` forwards unknown kwargs as `--key=value`,
+  so `GodotEnv(..., n_envs=8)` sets it. The trainer sees `env.num_envs == N`; `sync.gd`
+  auto-discovers all N agents in the `"AGENT"` group and sends obs/reward/done as arrays.
+- **Multi-process collectors** — for true parallel collection (threads / Ray actors),
+  **export** the game and launch K binaries on ports `11008 + i`:
+  `godot --headless --export-release "Linux" build/bridge.x86_64`
+  (needs Godot 4.6 **export templates** installed; see `export_presets.cfg`). Total envs =
+  K processes × N in-process agents.
+- `train/collect_smoke.py` is a reference harness (uses `godot_rl`'s `GodotEnv`) showing
+  both axes; run it with `~/Godot/godot_rl_agents/.venv/bin/python`.
 
 ## Architecture
 
-Four project scripts (everything else under `addons/` is third-party — `godot_ai` MCP
+Five project scripts (everything else under `addons/` is third-party — `godot_ai` MCP
 tooling and `godot_rl_agents`). The data flow is one orchestrator wiring up the rest:
 
-- **`voxel_terrain.gd`** (`Node3D`, the main scene root) — orchestrator. Generates the
-  GRID×GRID noise terrain (one column per meter, rendered as a `MultiMeshInstance3D` plus
-  a matching `StaticBody3D` of per-column box colliders), places the two anchor cubes at
-  random cells, sets up lighting and the fly camera, and creates the `BuildSystem`,
-  `RLAgent`, and `Sync` nodes. `generate_world()` is the per-episode reset for the world.
+- **`voxel_terrain.gd`** (`Node3D`, the main scene root) — orchestrator. Sets up the one
+  shared lighting + fly camera, spawns N `BridgeEnvironment` instances on a near-square
+  grid (X/Z offset `GRID + ENV_GAP` apart so their physics don't interfere), and adds the
+  single `Sync` node **last** so it discovers every agent. Reads `--n_envs` / `NUM_ENVS`.
+
+- **`environment.gd`** (`class_name BridgeEnvironment`, `Node3D`) — one self-contained
+  environment. Generates the GRID×GRID noise terrain (a `MultiMeshInstance3D` plus a
+  matching `StaticBody3D` of per-column box colliders), stacks the two anchor cubes to a
+  common height, and creates this env's `BuildSystem` + `RLAgent`. `generate_world()` is
+  the per-episode reset; all children inherit this node's offset transform.
 
 - **`build_system.gd`** (`Node3D`) — all game logic and the RL observation. Owns the grid
   cursor, ghost preview, block placement, and win/lose detection (win = plates connect the
@@ -52,13 +76,19 @@ tooling and `godot_rl_agents`). The data flow is one orchestrator wiring up the 
 
 - **`fly_camera.gd`** (`Camera3D`) — spectator camera (WASD/EQ move, hold RMB to look).
 
-Key wiring detail: `voxel_terrain.gd` injects world data (`heights`, `grid`, `blue_cell`,
-`red_cell`, and the `bs`/`world` back-references) into `BuildSystem` and the controller
-**before** those nodes enter the tree, so their `_ready()` sees populated state. If you add
-fields that `_ready()` depends on, set them before `add_child()`.
+Key wiring detail: `environment.gd::setup()` injects world data (`heights`, `grid`,
+`blue_cell`, `red_cell`, `show_hud`, and the `bs`/`world` back-references) into
+`BuildSystem` and the controller **before** those nodes enter the tree, so their `_ready()`
+sees populated state. If you add fields that `_ready()` depends on, set them before
+`add_child()`. The controller's `world` is its `BridgeEnvironment`, so each agent resets
+only its own sub-env on done (correct per-env autoreset).
 
 Coordinate convention: integer `Vector3i` grid cells (x, y, z) where y is height in voxels;
 `heights[x][z]` is the terrain top at a column. World positions are cell + 0.5 offsets.
+**These are local to each environment** — `BuildSystem` must use local node positions (not
+`global_position`) for fall/collapse checks and the ghost, so a world placed at an X/Z
+offset still behaves correctly. The observation image is built from local grid cells, so it
+is identical regardless of an environment's offset. Only env index 0 draws the HUD.
 
 ## Conventions
 

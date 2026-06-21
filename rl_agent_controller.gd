@@ -3,14 +3,14 @@ extends AIController3D
 ## It drives the same BuildSystem a human does: move the grid cursor, switch
 ## block type, and place plates/supports to link the blue and red cubes.
 ##
-## Observation: a 6 x 40 x 40 uint8 "image" (terrain, cubes, supports, slabs,
+## Observation: a 6 x 25 x 25 uint8 "image" (terrain, cubes, supports, slabs,
 ## cursor, and a constant block-type plane: 0 = PLATE, 255 = SUPPORT).
 ## Action: one discrete head of size 8 (move +/-x, +/-z, +/-y, toggle, place).
 ## Reward: +1 whenever the blue<->red connecting distance reaches a new minimum
 ## at a connectable level, else 0 (see BuildSystem.compute_gap).
 
 var bs: Node      # BuildSystem
-var world: Node   # VoxelTerrain (owns world generation / reset)
+var world: Node   # BridgeEnvironment (owns this env's world generation / reset)
 
 var _best_gap := 1 << 30
 

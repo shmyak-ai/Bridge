@@ -9,6 +9,7 @@ var heights: Array = []          # heights[x][z] = terrain column height
 var grid := 25                   # terrain is grid x grid cells
 var blue_cell := Vector3i.ZERO   # cell occupied by the blue cube
 var red_cell := Vector3i.ZERO    # cell occupied by the red cube
+var show_hud := true             # only one env draws the on-screen HUD overlay
 
 enum BlockType { PLATE, SUPPORT }
 enum GameState { BUILDING, WON, COLLAPSED }
@@ -50,7 +51,8 @@ var _hud_status: Label
 func _ready() -> void:
 	_cursor = blue_cell
 	_make_ghost()
-	_make_hud()
+	if show_hud:
+		_make_hud()
 	_update_hud()
 
 # --- Input -----------------------------------------------------------------
@@ -161,11 +163,13 @@ func _physics_process(delta: float) -> void:
 	_ghost.visible = _state == GameState.BUILDING
 	if _state != GameState.BUILDING:
 		return
-	_ghost.global_position = _world_pos(_resolve(_cursor), _current)
+	# Positions are kept local to this BuildSystem so they stay correct when the
+	# environment is placed at an X/Z offset (one of many in the same scene).
+	_ghost.position = _world_pos(_resolve(_cursor), _current)
 
 	for b in _blocks:
 		var node: RigidBody3D = b["node"]
-		if node.global_position.y < FAIL_Y or node.global_position.distance_to(b["spawn"]) > COLLAPSE_DIST:
+		if node.position.y < FAIL_Y or node.position.distance_to(b["spawn"]) > COLLAPSE_DIST:
 			_set_state(GameState.COLLAPSED)
 			return
 
@@ -261,6 +265,8 @@ func _new_label(parent: Node) -> Label:
 	return l
 
 func _update_hud() -> void:
+	if not show_hud:
+		return
 	var tname := "PLATE (1 x 0.1 x 1)" if _current == BlockType.PLATE else "SUPPORT (0.1 x 1 x 0.1)"
 	_hud_type.text = "Block: " + tname
 	var rc := _resolve(_cursor)
