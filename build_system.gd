@@ -371,8 +371,9 @@ func build_obs_image() -> PackedByteArray:
 	# ch3: highest plate top per column
 	for cell in _plate_cells:
 		_max_px(buf, 3, cell.x, cell.z, _enc(float(cell.y) + PLATE_SIZE.y))
-	# ch4: cursor cell, a constant marker (cursor x/z only; height is auto-resolved)
-	_set_px(buf, 4, _cursor.x, _cursor.z, 255)
+	# ch4: cursor cell, encoded with the height its next block would land at
+	# (climbs as that column fills); >=1 so the cursor is always visible.
+	_set_px(buf, 4, _cursor.x, _cursor.z, maxi(1, _enc(float(_resolve(_cursor).y))))
 	# ch5: selected block type as a constant plane (0 = PLATE, 255 = SUPPORT)
 	var type_val := _current * 255
 	var base := 5 * IMG_SIZE * IMG_SIZE

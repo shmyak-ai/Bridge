@@ -113,16 +113,15 @@ resets **all** agents at once.
 
 ## 5. Bridge's observation & action spaces
 
-**Action space** (per agent): `{"act": {"size": 8, "action_type": "discrete"}}`
-— a single `Discrete(8)`:
+**Action space** (per agent): `{"act": {"size": 6, "action_type": "discrete"}}`
+— a single `Discrete(6)`:
 
 | value | effect |
 |---|---|
 | 0 / 1 | move cursor −x / +x |
 | 2 / 3 | move cursor −z / +z |
-| 4 / 5 | move cursor −y / +y |
-| 6 | toggle block type (plate ↔ support) |
-| 7 | place current block |
+| 4 | toggle block type (plate ↔ support) |
+| 5 | place current block |
 
 **Action encoding on the wire.** The `action` field is a list **per agent** of
 action-head dicts: `[{"act": 3}, {"act": 0}, …]` (length N, values are plain
@@ -140,10 +139,12 @@ arr = np.frombuffer(bytes.fromhex(hex_string), dtype=np.uint8).reshape(6, 25, 25
 # Channel-major (C order): arr[channel, z, x]
 ```
 
-The 6 channels (each a top-surface height in 0.1 m units, 0 = empty): terrain,
-cubes, supports, plates, cursor, and a constant block-type plane (0 = plate,
-255 = support). It's identical regardless of an environment's world offset, so
-all N obs share the same shape/meaning.
+The 6 channels: terrain, cubes, supports, and plates are top-surface heights in
+0.1 m units (0 = empty); cursor marks the cursor's x/z cell, encoded with the
+height its next block would land at (climbs as that column fills, ≥1 so it stays
+visible); and a constant block-type plane (0 = plate, 255 = support). It's
+identical regardless of an environment's world offset, so all N obs share the
+same shape/meaning.
 
 ---
 
