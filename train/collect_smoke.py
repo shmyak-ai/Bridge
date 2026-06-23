@@ -72,8 +72,8 @@ def run_collector(collector_id: int, args) -> None:
     for step in range(args.steps):
         # Action layout expected by GodotEnv.step: one list per action head,
         # each holding one value per agent. Bridge has a single discrete head
-        # "act" of size 8 -> a single inner list of N ints.
-        action = [[random.randint(0, 7) for _ in range(n)]]
+        # "act" of size 6 -> a single inner list of N ints.
+        action = [[random.randint(0, 5) for _ in range(n)]]
         obs, reward, term, trunc, info = env.step(action)
         assert len(reward) == n, f"expected {n} rewards, got {len(reward)}"
         assert len(term) == n

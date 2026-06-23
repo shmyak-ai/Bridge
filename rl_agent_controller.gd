@@ -5,7 +5,7 @@ extends AIController3D
 ##
 ## Observation: a 6 x 25 x 25 uint8 "image" (terrain, cubes, supports, slabs,
 ## cursor, and a constant block-type plane: 0 = PLATE, 255 = SUPPORT).
-## Action: one discrete head of size 8 (move +/-x, +/-z, +/-y, toggle, place).
+## Action: one discrete head of size 6 (move +/-x, +/-z, toggle, place).
 ## Reward: +1 whenever the blue<->red connecting distance reaches a new minimum
 ## at a connectable level, else 0 (see BuildSystem.compute_gap).
 
@@ -15,7 +15,7 @@ var world: Node   # BridgeEnvironment (owns this env's world generation / reset)
 var _best_gap := 1 << 30
 
 func get_action_space() -> Dictionary:
-	return {"act": {"size": 8, "action_type": "discrete"}}
+	return {"act": {"size": 6, "action_type": "discrete"}}
 
 func set_action(action) -> void:
 	match int(action["act"]):
@@ -23,10 +23,8 @@ func set_action(action) -> void:
 		1: bs.move_cursor(Vector3i(1, 0, 0))
 		2: bs.move_cursor(Vector3i(0, 0, -1))
 		3: bs.move_cursor(Vector3i(0, 0, 1))
-		4: bs.move_cursor(Vector3i(0, -1, 0))
-		5: bs.move_cursor(Vector3i(0, 1, 0))
-		6: bs.toggle_type()
-		7: bs.place()
+		4: bs.toggle_type()
+		5: bs.place()
 
 func get_obs() -> Dictionary:
 	return {"map_2d": bs.build_obs_image().hex_encode()}

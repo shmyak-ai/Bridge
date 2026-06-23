@@ -23,11 +23,11 @@ supports) to build a standing bridge between them. The game is driven either by 
 - **RL control mode** is the `voxel_terrain.gd::CONTROL_MODE` variable (drives both the
   env count and the `Sync` node):
   - `Sync.ControlModes.TRAINING` (current default) — connects to a Python `godot_rl`
-    trainer over TCP (default port `11008`, see `addons/godot_rl_agents/sync.gd`).
-    The Godot side blocks waiting for the trainer, so launch the Python trainer to drive it.
+	trainer over TCP (default port `11008`, see `addons/godot_rl_agents/sync.gd`).
+	The Godot side blocks waiting for the trainer, so launch the Python trainer to drive it.
   - `HUMAN` — play/test manually with the keyboard (see HUD controls in `build_system.gd`).
-    HUMAN auto-spawns a **single** environment (each BuildSystem has its own input handler,
-    so N envs would all move at once) — no need to touch `NUM_ENVS`.
+	HUMAN auto-spawns a **single** environment (each BuildSystem has its own input handler,
+	so N envs would all move at once) — no need to touch `NUM_ENVS`.
   - Switch this one variable when you want to play by hand vs. train.
 
 ### Vectorized / parallel environments
@@ -69,7 +69,7 @@ tooling and `godot_rl_agents`). The data flow is one orchestrator wiring up the 
   channel-major image (heights encoded in `HEIGHT_UNIT` = 0.1 m steps).
 
 - **`rl_agent_controller.gd`** (`AIController3D`) — the RL agent. Action space is one
-  discrete head of size 8 (move ±x/±z/±y, toggle block, place); observation is the
+  discrete head of size 6 (move ±x/±z, toggle block, place); observation is the
   `build_system` image under obs key `map_2d`; reward is +1 each time the blue↔red
   connecting distance (`compute_gap`, Chebyshev) reaches a new minimum at a connectable
   level. On win/collapse it sets `done`/`needs_reset` and `reset()` rebuilds the world.

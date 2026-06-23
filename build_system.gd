@@ -71,8 +71,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_RIGHT: _cursor.x += 1
 		KEY_UP: _cursor.z -= 1
 		KEY_DOWN: _cursor.z += 1
-		KEY_PAGEUP: _cursor.y += 1
-		KEY_PAGEDOWN: _cursor.y -= 1
 		KEY_TAB:
 			_current = BlockType.SUPPORT if _current == BlockType.PLATE else BlockType.PLATE
 			(_ghost.mesh as BoxMesh).size = _size_for(_current)
@@ -254,7 +252,7 @@ func _make_hud() -> void:
 	_hud_cursor = _new_label(box)
 	_hud_status = _new_label(box)
 	var controls := _new_label(box)
-	controls.text = "Move: WASD  E/Q  (Shift=fast)   Look: hold Right Mouse\nCursor: Arrows + PageUp/PageDown   Tab: switch block   Enter: place   R: restart"
+	controls.text = "Move: WASD  E/Q  (Shift=fast)   Look: hold Right Mouse\nCursor: Arrows   Tab: switch block   Enter: place   R: restart"
 
 func _new_label(parent: Node) -> Label:
 	var l := Label.new()
@@ -373,8 +371,8 @@ func build_obs_image() -> PackedByteArray:
 	# ch3: highest plate top per column
 	for cell in _plate_cells:
 		_max_px(buf, 3, cell.x, cell.z, _enc(float(cell.y) + PLATE_SIZE.y))
-	# ch4: cursor cell (>=1 so it is always visible, even at y = 0)
-	_set_px(buf, 4, _cursor.x, _cursor.z, maxi(1, _enc(float(_cursor.y))))
+	# ch4: cursor cell, a constant marker (cursor x/z only; height is auto-resolved)
+	_set_px(buf, 4, _cursor.x, _cursor.z, 255)
 	# ch5: selected block type as a constant plane (0 = PLATE, 255 = SUPPORT)
 	var type_val := _current * 255
 	var base := 5 * IMG_SIZE * IMG_SIZE
