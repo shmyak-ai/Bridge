@@ -139,12 +139,40 @@ arr = np.frombuffer(bytes.fromhex(hex_string), dtype=np.uint8).reshape(6, 25, 25
 # Channel-major (C order): arr[channel, z, x]
 ```
 
-The 6 channels: terrain, cubes, supports, and plates are top-surface heights in
-0.1 m units (0 = empty); cursor marks the cursor's x/z cell, encoded with the
-height its next block would land at (climbs as that column fills, ≥1 so it stays
-visible); and a constant block-type plane (0 = plate, 255 = support). It's
-identical regardless of an environment's world offset, so all N obs share the
-same shape/meaning.
+**Layout.** Shape `[6, 25, 25]` is `[channel, z, x]` (channel-major, then row `z`,
+then `x`; see `build_system.gd::_px_index`). One pixel per terrain grid cell,
+25×25, no padding. Built from **local** grid cells, so the image is identical
+regardless of an environment's world X/Z offset — all N agents share one frame.
+
+**Encoding.** Values are `uint8`. The height channels (0–4) store a top surface in
+`HEIGHT_UNIT` = 0.1 m steps: `value = round(height_m / 0.1)`, clamped `0..255`
+(`_enc`), so the tallest representable surface is 25.5 m and `0` means empty / no
+feature. Channel 5 is categorical, not a height.
+
+| ch | feature | value at a cell | density |
+|----|---------|-----------------|---------|
+| 0 | terrain | `terrain_height × 10` | dense (every column) |
+| 1 | cubes (blue & red anchors) | `(cube.y + 1) × 10` | 2 pixels |
+| 2 | supports | `(highest_support.y + 1) × 10` — per-column max | sparse |
+| 3 | plates | `(highest_plate.y + 0.1) × 10` — per-column max | sparse |
+| 4 | cursor | `max(1, resolve(cursor).y × 10)` — height the next block would land at | 1 pixel |
+| 5 | block type | `0` (plate) or `255` (support), filling all 625 pixels | constant plane |
+
+**Caveats for training on this:**
+
+- **Channels are heterogeneous and unnormalized.** Channels 0–4 are heights in
+  0.1 m units; channel 5 is a 0/255 flag. A CNN front-end sees very different
+  scales/semantics per channel — consider per-channel normalization.
+- **Stacking is lossy.** Channels 2/3 keep only the *highest* support / plate top
+  per column, in separate channels, so support-under-plate ordering within a
+  column is not represented — only the topmost of each type.
+- **Plate top ≠ next landing height.** Channel 3 reports a plate top at
+  `cell.y + 0.1` (the physical 0.1 m slab), but for placement a plate occupies the
+  whole cell (next block lands at `cell.y + 1`). Use **channel 4** for "where my
+  next block goes," not channel 3.
+- **No dynamics in the obs.** It is a pure top-down snapshot: no block velocity,
+  no stability countdown (`STABLE_TIME`), no `compute_gap`. Win / collapse surface
+  only via the `done` flag and `info.is_success` (Section 4), not the image.
 
 ---
 
