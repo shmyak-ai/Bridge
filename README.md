@@ -14,7 +14,7 @@ cubes and agent), so one process is already a vectorized environment of size N.
 
 - Engine: Godot **4.6**, Forward Plus renderer, **Jolt Physics**.
 - Observation: a `6 × 25 × 25` uint8 top-down image (`map_2d`).
-- Action: one discrete head of size 8 (move cursor ±x/±z/±y, toggle block, place).
+- Action: one discrete head of size 6 (move cursor ±x/±z, toggle block, place).
 
 See `CLAUDE.md` for the code architecture.
 
